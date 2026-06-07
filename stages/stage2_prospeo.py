@@ -5,6 +5,8 @@ Auth: X-KEY header
 """
 
 import logging
+import json
+import os
 from utils.http import make_session, safe_post
 
 logger = logging.getLogger(__name__)
@@ -13,6 +15,14 @@ PROSPEO_BASE = "https://api.prospeo.io"
 
 
 def find_decision_makers(domains: list[str], config: dict) -> list[dict]:
+    # Load from cache if available (avoids rate limits)
+    cache_file = "prospeo_cache.json"
+    if os.path.exists(cache_file):
+        with open(cache_file) as f:
+            cached = json.load(f)
+        logger.info(f"Loaded {len(cached)} prospects from cache")
+        return cached
+
     api_key    = config["prospeo_api_key"]
     per_domain = config.get("prospeo_limit", 5)
     delay      = config.get("rate_limit_delay", 1.0)
@@ -27,7 +37,7 @@ def find_decision_makers(domains: list[str], config: dict) -> list[dict]:
     seen = set()
 
     for domain in domains:
-        logger.info(f"Prospeo: searching {domain} …")
+        logger.info(f"Prospeo: searching {domain} ...")
         prospects = _search_people(session, domain, per_domain, delay)
         for p in prospects:
             key = p.get("linkedin_url") or p.get("full_name", "") + domain
@@ -40,15 +50,6 @@ def find_decision_makers(domains: list[str], config: dict) -> list[dict]:
     logger.info(f"Prospeo total: {len(all_prospects)} unique prospects")
     return all_prospects
 
-import json, os
-
-def _load_cached(domain):
-    cache_file = "prospeo_cache.json"
-    if os.path.exists(cache_file):
-        with open(cache_file) as f:
-            cache = json.load(f)
-        return cache.get(domain, [])
-    return []
 
 def _search_people(session, domain, limit, delay) -> list[dict]:
     payload = {
@@ -80,20 +81,18 @@ def _search_people(session, domain, limit, delay) -> list[dict]:
     for item in data.get("results", []):
         person  = item.get("person", {})
         company = item.get("company", {})
-
         first = person.get("first_name", "")
         last  = person.get("last_name", "")
-        
 
         results.append({
             "full_name"     : f"{first} {last}".strip(),
             "first_name"    : first,
             "last_name"     : last,
-            "job_title": person.get("current_job_title", ""),
+            "job_title"     : person.get("current_job_title", ""),
             "company_domain": domain,
             "company_name"  : company.get("name", domain),
             "linkedin_url"  : person.get("linkedin_url", ""),
-            "person_id": person.get("person_id", ""),
+            "person_id"     : person.get("person_id", ""),
             "email"         : "",
         })
 
